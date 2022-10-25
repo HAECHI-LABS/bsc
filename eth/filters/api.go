@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"math/big"
 	"sync"
 	"time"
@@ -150,13 +151,47 @@ func (api *PublicFilterAPI) NewPendingTransactions(ctx context.Context) (*rpc.Su
 		txHashes := make(chan []common.Hash, 128)
 		pendingTxSub := api.events.SubscribePendingTxs(txHashes)
 
+		var start int64 = 0
+		var limitCount int64 = 400
+		var sumTxCount int64 = 0
+		var isStart = false
+		txs := make([]string, 0)
+
 		for {
 			select {
 			case hashes := <-txHashes:
+				if !isStart {
+					fmt.Println("start")
+					isStart = true
+					start = time.Now().UnixNano()
+				}
+				//taken := time.Now().UnixNano()
 				// To keep the original behaviour, send a single tx hash in one notification.
 				// TODO(rjl493456442) Send a batch of tx hashes in one notification
+				//fmt.Printf("hashes %d received in time %d (ns), last tx: %s \n", sumTxCount, taken-start, hashes[len(hashes)-1])
 				for _, h := range hashes {
+					sumTxCount++
+					fmt.Println(sumTxCount)
+					txs = append(txs, h.String())
+					if sumTxCount >= limitCount {
+						fmt.Println("end")
+						result := Result{
+							Start:   start,
+							End:     time.Now().UnixNano(),
+							TxCount: sumTxCount,
+							Txs:     txs,
+						}
+						result.Taken = result.End - result.Start
+
+						start = 0
+						sumTxCount = 0
+						isStart = false
+						blockFile, _ := json.MarshalIndent(result, "", " ")
+						_ = ioutil.WriteFile("result.json", blockFile, 0644)
+					}
+					//fmt.Printf("hash %s time %d", h.String(), time.Now().UnixNano())
 					notifier.Notify(rpcSub.ID, h)
+
 				}
 			case <-rpcSub.Err():
 				pendingTxSub.Unsubscribe()
